@@ -2,7 +2,7 @@ from flask import Flask, render_template, jsonify
 import serial
 import threading
 
-sensor_value = 0
+sensor_value = None
 
 def read_sensor_data():
     global sensor_value
