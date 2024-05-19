@@ -1,17 +1,22 @@
-import time, threading
-import os, signal
+import time
+import threading
+import os
+import signal
 from dash import Dash, dcc, html, Input, Output, State, callback
+from dash.dash import no_update
 from dash_daq import StopButton
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import plotly.subplots as sp
-import serial, serial.serialutil
+import serial
+import serial.serialutil
 
 # Global variables
 altitude = 0
 alt_data = []
+ctrl_c_pressed = False
 
-# Thread-safe mechanisms
+
 lock = threading.Lock()
 
 def serial_monitor(port: str, baudrate: int) -> None:
@@ -29,6 +34,7 @@ def serial_monitor(port: str, baudrate: int) -> None:
             print("Arduino disconnected.")
             with open("ultrasonic.csv", 'a') as file:
                 print("Arduino disconnected.", file=file)
+            app.server_context['disconnected'] = True
             break
         except KeyboardInterrupt:
             print("User terminated operation.")
@@ -68,9 +74,25 @@ def update_graph_live(n):
     )
     return fig
 
-@callback(Output("EOE-modal", "is_open"), Input("stop-button", "n_clicks"), State("EOE-modal", "is_open"))
-def end_code(stop_pressed, is_open):
+@callback(
+    Output("EOE-modal", "is_open"),
+    [Input("stop-button", "n_clicks"), Input("interval-component", "n_intervals")],
+    [State("EOE-modal", "is_open")]
+)
+def end_code(stop_pressed, n_intervals, is_open):
     if stop_pressed and not is_open:
+        return True
+    if app.server_context.get('disconnected', False):
+        return True
+    return is_open
+
+@callback(
+    Output("ctrlc-modal", "is_open"),
+    Input("interval-component", "n_intervals"),
+    State("ctrlc-modal", "is_open")
+)
+def show_ctrlc_modal(n_intervals, is_open):
+    if ctrl_c_pressed and not is_open and not app.server_context.get('disconnected', False):
         return True
     return is_open
 
@@ -88,11 +110,12 @@ if __name__ == "__main__":
         'time': [],
         'altitude': [],
     }
+    app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+    app.server_context = {}
+
     thread_serial = threading.Thread(target=serial_monitor, args=("COM8", 9600))
     thread_serial.start()
 
-    external_css = ["https://codepen.io/chriddyp/pen/bWLwgP.css", dbc.themes.BOOTSTRAP]
-    app = Dash(__name__, external_stylesheets=external_css)
     app.layout = html.Div([
         html.Div([
             html.H4("Arduino Live Data Feed"),
@@ -101,12 +124,27 @@ if __name__ == "__main__":
             dcc.Interval(id="interval-component", interval=1000, n_intervals=0),
         ]),
         dbc.Modal([
-            dbc.ModalHeader(dbc.ModalTitle("Server Shutdown."), close_button=True),
-            dbc.ModalBody("User has terminated the process."),
+            dbc.ModalHeader(dbc.ModalTitle("Error"), close_button=True),
+            dbc.ModalBody("The sensor has been disconnected from the COM port."),
         ], id="EOE-modal", size="sm", keyboard=False, backdrop=True, centered=True, is_open=False),
+        dbc.Modal([
+            dbc.ModalHeader(dbc.ModalTitle("Error"), close_button=True),
+            dbc.ModalBody("PROGRAM INTERRUPTED BY KEYBOARD."),
+        ], id="ctrlc-modal", size="sm", keyboard=False, backdrop=True, centered=True, is_open=False),
         StopButton(id="stop-button", n_clicks=0),
         html.Div(id="stopbtn-output"),
     ])
 
     print("Setup complete")
-    app.run(debug=False, use_reloader=False)
+
+    app_thread = threading.Thread(target=lambda: app.run(debug=False, use_reloader=False))
+    app_thread.start()
+
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print("Ctrl+C pressed.")
+        ctrl_c_pressed = True
+        time.sleep(1)
+        os.kill(os.getpid(), signal.SIGINT)
