@@ -2,7 +2,7 @@ from flask import Flask, render_template, jsonify
 import serial
 import threading
 
-sensor_value = None
+sensor_value = 0
 
 def read_sensor_data():
     global sensor_value
@@ -10,13 +10,12 @@ def read_sensor_data():
         with serial.Serial("COM8", baudrate=9600) as ser:
             while True:
                 value = ser.readline().decode('UTF-8').strip()
-                print(value)  # Debug print
-
                 try:
                     processed_value = float(value.split(',')[0])
                     sensor_value = processed_value
-                except (ValueError, IndexError):
-                    print("Error: Invalid sensor data format")
+                    print("Sensor value:", sensor_value)
+                except (ValueError, IndexError) as e:
+                    print(f"Error parsing sensor data: {e}. Raw data: {value}")
     except serial.SerialException as e:
         print(f"Error connecting to serial port: {e}")
 
@@ -32,11 +31,9 @@ def index():
 
 @app.route('/sensor_data')
 def get_sensor_data():
-    print(f"Returning sensor value: {sensor_value}")  # Debug print
-    if sensor_value is not None:
-        return jsonify({'sensor_value': sensor_value})
-    else:
-        return jsonify({'error': 'Failed to retrieve sensor data'})
+    print(f"Returning sensor value: {sensor_value}")
+    data = {'sensor_value': sensor_value}
+    return jsonify(data)
 
 if __name__ == '__main__':
     app.run(debug=True)
